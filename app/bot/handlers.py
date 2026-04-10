@@ -138,10 +138,16 @@ class BotHandlers:
         # 스캐너 실행
         elif data.startswith("scan:"):
             scanner_name = data.split(":", 1)[1]
-            await query.edit_message_text(f"{scanner_name} 스캐너 실행 중...")
+            await query.edit_message_text(f"[{scanner_name}] 데이터 수집 시작...")
             if self.scanner_fn:
                 try:
-                    result_text = await self.scanner_fn(scanner_name)
+                    async def progress(text: str):
+                        try:
+                            await query.edit_message_text(text)
+                        except Exception:
+                            pass
+
+                    result_text = await self.scanner_fn(scanner_name, progress_fn=progress)
                     await query.edit_message_text(result_text)
                 except Exception as e:
                     await query.edit_message_text(f"스캐너 오류: {e}")
@@ -149,7 +155,7 @@ class BotHandlers:
                 await query.edit_message_text(
                     f"[{scanner_name}]\n"
                     "스캐너가 연결되지 않았습니다.\n"
-                    "run_bot.py로 봇을 실행하세요."
+                    "run_telegram.py로 봇을 실행하세요."
                 )
 
         # 성과리뷰
