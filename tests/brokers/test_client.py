@@ -26,7 +26,8 @@ def mock_rate_limiter():
 
 @pytest.fixture
 def client(mock_auth, mock_rate_limiter):
-    return KiwoomClient(mock_auth, mock_rate_limiter, "https://mockapi.kiwoom.com")
+    return KiwoomClient(mock_auth, mock_rate_limiter, "https://mockapi.kiwoom.com",
+                        app_key="test_key", app_secret="test_secret")
 
 
 class TestKiwoomClient:

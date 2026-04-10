@@ -11,17 +11,15 @@ class KiwoomMarketData:
     def __init__(self, client: KiwoomClient):
         self._client = client
 
-    async def get_daily_bars(self, stock_code: str, count: int = 100) -> dict:
+    async def get_daily_bars(self, stock_code: str, base_dt: str = "", count: int = 100) -> dict:
         """일봉 차트 조회 (ka10081)"""
-        return await self._client.request(
-            "POST",
-            PATH_CHART,
-            TR_CHART_DAILY,
-            {
-                "stk_cd": stock_code,
-                "cnt": str(count),
-            },
-        )
+        body = {
+            "stk_cd": stock_code,
+            "upd_stkpc_tp": "1",
+        }
+        if base_dt:
+            body["base_dt"] = base_dt
+        return await self._client.request("POST", PATH_CHART, TR_CHART_DAILY, body)
 
     async def get_minute_bars(
         self,
@@ -37,6 +35,6 @@ class KiwoomMarketData:
             {
                 "stk_cd": stock_code,
                 "tic_scope": str(interval),
-                "cnt": str(count),
+                "upd_stkpc_tp": "1",
             },
         )

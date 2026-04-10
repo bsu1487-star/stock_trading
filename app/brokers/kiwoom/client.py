@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from app.core.exceptions import AuthError, OrderError, RateLimitError
+from app.core.exceptions import OrderError, RateLimitError
 from app.monitoring.logger import get_logger
 
 from .auth import KiwoomAuth
@@ -14,10 +14,19 @@ log = get_logger("kiwoom.client")
 class KiwoomClient:
     """키움 REST API 공통 래퍼"""
 
-    def __init__(self, auth: KiwoomAuth, rate_limiter: RateLimiter, base_url: str):
+    def __init__(
+        self,
+        auth: KiwoomAuth,
+        rate_limiter: RateLimiter,
+        base_url: str,
+        app_key: str = "",
+        app_secret: str = "",
+    ):
         self._auth = auth
         self._rate_limiter = rate_limiter
         self._base_url = base_url
+        self._app_key = app_key
+        self._app_secret = app_secret
         self._http = httpx.AsyncClient(base_url=base_url, timeout=10.0)
 
     async def request(
@@ -33,9 +42,12 @@ class KiwoomClient:
         token = await self._auth.get_token()
 
         headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "tr_cd": tr_code,
+            "Content-Type": "application/json;charset=UTF-8",
+            "authorization": f"Bearer {token}",
+            "appkey": self._app_key,
+            "secretkey": self._app_secret,
+            "api-id": tr_code,
+            "cont-yn": "N",
         }
 
         log.debug("api_request", method=method, path=path, tr_code=tr_code)

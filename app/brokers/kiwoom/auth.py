@@ -73,16 +73,23 @@ class KiwoomAuth:
                 json={
                     "grant_type": "client_credentials",
                     "appkey": self._app_key,
-                    "appsecretkey": self._app_secret,
+                    "secretkey": self._app_secret,
                 },
-                headers={"Content-Type": "application/json", "tr_cd": TR_AUTH},
+                headers={"Content-Type": "application/json"},
             )
             resp.raise_for_status()
             data = resp.json()
 
+        if data.get("return_code") != 0:
+            raise AuthError(f"키움 인증 오류: {data.get('return_msg', data)}")
+
         self._token = data["token"]
-        expires_in = int(data.get("expires_in", 86400))
-        self._expires_at = datetime.now() + timedelta(seconds=expires_in)
+        # expires_dt: "20260411224932" 형태
+        expires_dt = data.get("expires_dt", "")
+        if expires_dt:
+            self._expires_at = datetime.strptime(expires_dt, "%Y%m%d%H%M%S")
+        else:
+            self._expires_at = datetime.now() + timedelta(hours=24)
 
         log.info("token_refreshed", expires_at=self._expires_at.isoformat())
         return self._token
