@@ -31,6 +31,23 @@ def strategy_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+# ── 스캐너 한글 이름 매핑 ──
+
+SCANNER_NAMES = {
+    "volume_breakout": "거래량 돌파",
+    "bottom_rebound": "저점 반등",
+    "ma_recovery": "이평 회복",
+    "double_bottom": "이중바닥",
+    "pullback_reentry": "눌림 재상승",
+    "first_pullback": "첫 조정",
+    "c_spot": "C자리",
+}
+
+
+def get_scanner_label(scanner_id: str) -> str:
+    return SCANNER_NAMES.get(scanner_id, scanner_id)
+
+
 # ── 스캐너 선택 인라인 버튼 ──
 
 def scanner_keyboard() -> InlineKeyboardMarkup:

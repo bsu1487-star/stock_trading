@@ -48,8 +48,10 @@ async def run_scanner(scanner_name: str, progress_fn=None) -> str:
     from app.brokers.kiwoom.market_data import KiwoomMarketData
     from app.brokers.kiwoom.rate_limiter import RateLimiter
     from app.scanners.dsl import ScannerDSL
+    from app.bot.keyboards import get_scanner_label
     import pandas as pd
 
+    label = get_scanner_label(scanner_name)
     codes = list(STOCK_NAMES.keys())
     total = len(codes)
 
@@ -62,11 +64,11 @@ async def run_scanner(scanner_name: str, progress_fn=None) -> str:
 
     bars = {}
     for i, code in enumerate(codes, 1):
-        name = STOCK_NAMES.get(code, code)
+        stock_name = STOCK_NAMES.get(code, code)
 
         # 매 5개마다 진행 상황 업데이트
         if progress_fn and (i == 1 or i % 5 == 0 or i == total):
-            await progress_fn(f"[{scanner_name}] {i}/{total} 스캔 중... ({name})")
+            await progress_fn(f"[{label}] {i}/{total} 스캔 중... ({stock_name})")
 
         try:
             resp = await md.get_daily_bars(code, base_dt="20260410")
@@ -95,13 +97,13 @@ async def run_scanner(scanner_name: str, progress_fn=None) -> str:
     results = scanner.scan(bars)
 
     if not results:
-        return f"[{scanner_name}] 완료\n{len(bars)}개 종목 스캔\n\n후보 종목 없음"
+        return f"[{label}] 완료\n{len(bars)}개 종목 스캔\n\n후보 종목 없음"
 
-    lines = [f"[{scanner_name}] 완료", f"{len(bars)}개 종목 스캔", ""]
+    lines = [f"[{label}] 완료", f"{len(bars)}개 종목 스캔", ""]
     for i, r in enumerate(results[:10], 1):
-        name = STOCK_NAMES.get(r.stock_code, "")
+        stock_name = STOCK_NAMES.get(r.stock_code, "")
         reasons = ", ".join(r.reasons)
-        lines.append(f"{i}. {r.stock_code} {name} ({r.score:.1f}점)")
+        lines.append(f"{i}. {r.stock_code} {stock_name} ({r.score:.1f}점)")
         lines.append(f"   {reasons}")
     if len(results) > 10:
         lines.append(f"\n... 외 {len(results) - 10}개")

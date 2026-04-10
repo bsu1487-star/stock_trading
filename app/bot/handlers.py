@@ -9,6 +9,7 @@ from app.bot.formatters import format_positions, format_status
 from app.bot.keyboards import (
     MAIN_MENU_KEYBOARD,
     control_keyboard,
+    get_scanner_label,
     kill_confirm_keyboard,
     review_keyboard,
     scanner_keyboard,
@@ -137,8 +138,9 @@ class BotHandlers:
 
         # 스캐너 실행
         elif data.startswith("scan:"):
-            scanner_name = data.split(":", 1)[1]
-            await query.edit_message_text(f"[{scanner_name}] 데이터 수집 시작...")
+            scanner_id = data.split(":", 1)[1]
+            label = get_scanner_label(scanner_id)
+            await query.edit_message_text(f"[{label}] 데이터 수집 시작...")
             if self.scanner_fn:
                 try:
                     async def progress(text: str):
@@ -147,13 +149,13 @@ class BotHandlers:
                         except Exception:
                             pass
 
-                    result_text = await self.scanner_fn(scanner_name, progress_fn=progress)
+                    result_text = await self.scanner_fn(scanner_id, progress_fn=progress)
                     await query.edit_message_text(result_text)
                 except Exception as e:
-                    await query.edit_message_text(f"스캐너 오류: {e}")
+                    await query.edit_message_text(f"[{label}] 오류: {e}")
             else:
                 await query.edit_message_text(
-                    f"[{scanner_name}]\n"
+                    f"[{label}]\n"
                     "스캐너가 연결되지 않았습니다.\n"
                     "run_telegram.py로 봇을 실행하세요."
                 )
