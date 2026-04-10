@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.bot.formatters import format_positions, format_status
@@ -31,8 +31,10 @@ class BotHandlers:
         self.health_check = None
         self.kill_switch = None
         self.alert_manager = None
-        self.scanner_fn = None       # 외부에서 주입: async def(scanner_name) -> str
+        self.scanner_fn = None       # 외부에서 주입: async def(scanner_name, progress_fn) -> (str, list)
         self.review_fn = None        # 외부에서 주입: async def(review_type) -> str
+        self.chart_fn = None         # 외부에서 주입: async def(stock_code, scan_info) -> BytesIO
+        self._last_scan_results = [] # 마지막 스캔 결과 저장 (차트 요청용)
 
     # ── 슬래시 명령어 핸들러 ──
 
@@ -149,8 +151,30 @@ class BotHandlers:
                         except Exception:
                             pass
 
-                    result_text = await self.scanner_fn(scanner_id, progress_fn=progress)
-                    await query.edit_message_text(result_text)
+                    result_text, scan_results = await self.scanner_fn(scanner_id, progress_fn=progress)
+                    self._last_scan_results = scan_results
+
+                    # 종목별 차트 버튼 생성
+                    if scan_results:
+                        from app.market.stock_pool import get_stock_name
+                        buttons = []
+                        row = []
+                        for r in scan_results:
+                            name = get_stock_name(r.stock_code)
+                            short_label = f"{name}"
+                            row.append(InlineKeyboardButton(
+                                short_label,
+                                callback_data=f"chart:{r.stock_code}:{scanner_id}",
+                            ))
+                            if len(row) == 3:
+                                buttons.append(row)
+                                row = []
+                        if row:
+                            buttons.append(row)
+                        markup = InlineKeyboardMarkup(buttons)
+                        await query.edit_message_text(result_text, reply_markup=markup)
+                    else:
+                        await query.edit_message_text(result_text)
                 except Exception as e:
                     await query.edit_message_text(f"[{label}] 오류: {e}")
             else:
@@ -159,6 +183,38 @@ class BotHandlers:
                     "스캐너가 연결되지 않았습니다.\n"
                     "run_telegram.py로 봇을 실행하세요."
                 )
+
+        # 차트 요청
+        elif data.startswith("chart:"):
+            parts = data.split(":", 2)
+            stock_code = parts[1]
+            scanner_id = parts[2] if len(parts) > 2 else ""
+            from app.market.stock_pool import get_stock_name
+            name = get_stock_name(stock_code)
+            label = get_scanner_label(scanner_id) if scanner_id else ""
+
+            # 스캔 결과에서 해당 종목 정보 찾기
+            scan_info = ""
+            for r in self._last_scan_results:
+                if r.stock_code == stock_code:
+                    scan_info = ", ".join(r.reasons)
+                    break
+
+            if self.chart_fn:
+                try:
+                    await query.answer(f"{name} 차트 생성 중...")
+                    chart_buf = await self.chart_fn(stock_code, scan_info)
+                    if chart_buf:
+                        caption = f"{stock_code} {name}"
+                        if scan_info:
+                            caption += f"\n{scan_info}"
+                        await query.message.reply_photo(photo=chart_buf, caption=caption)
+                    else:
+                        await query.message.reply_text(f"{name}: 차트 데이터가 없습니다.")
+                except Exception as e:
+                    await query.message.reply_text(f"{name} 차트 오류: {e}")
+            else:
+                await query.message.reply_text(f"{name}: 차트 기능이 연결되지 않았습니다.")
 
         # 성과리뷰
         elif data.startswith("review:"):

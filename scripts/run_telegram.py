@@ -134,7 +134,7 @@ async def run_scanner(scanner_name: str, progress_fn=None) -> str:
     results = scanner.scan(bars)
 
     if not results:
-        return f"[{label}] 완료\n{len(bars)}/{total}개 종목 스캔\n\n후보 종목 없음"
+        return f"[{label}] 완료\n{len(bars)}/{total}개 종목 스캔\n\n후보 종목 없음", []
 
     lines = [f"[{label}] 완료", f"{len(bars)}/{total}개 종목 스캔", ""]
     for i, r in enumerate(results, 1):
@@ -142,7 +142,21 @@ async def run_scanner(scanner_name: str, progress_fn=None) -> str:
         reasons = ", ".join(r.reasons)
         lines.append(f"{i}. {r.stock_code} {name} ({r.score:.1f}점)")
         lines.append(f"   {reasons}")
-    return "\n".join(lines)
+    lines.append("\n종목명을 누르면 차트를 볼 수 있습니다.")
+    return "\n".join(lines), results
+
+
+# ── 차트 생성 ──
+
+async def generate_chart(stock_code: str, scan_info: str = ""):
+    """캐시된 일봉 데이터로 차트 이미지 생성"""
+    from app.bot.chart import generate_chart
+
+    df = bar_cache.get(stock_code)
+    if df is None:
+        return None
+
+    return generate_chart(stock_code, df, scan_info)
 
 
 # ── 메인 ──
@@ -176,8 +190,9 @@ async def main():
     health.set_scheduler_running(False)
     bot.handlers.health_check = health
 
-    # 스캐너 콜백 연결
+    # 스캐너 + 차트 콜백 연결
     bot.handlers.scanner_fn = run_scanner
+    bot.handlers.chart_fn = generate_chart
 
     # 알림 매니저 연결
     async def send_alert(text: str):
