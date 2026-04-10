@@ -8,6 +8,7 @@
 import asyncio
 import sys
 import os
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -16,33 +17,47 @@ from app.core.types import AlertLevel
 from app.bot.telegram_bot import TelegramBot
 from app.monitoring.alerts import AlertManager
 from app.monitoring.health import HealthCheck
+from app.market.stock_pool import get_stock_pool, get_stock_name, get_pool_size
 
 
-# 시가총액 상위 종목 (코드 → 이름)
-STOCK_NAMES = {
-    "005930": "삼성전자",
-    "000660": "SK하이닉스",
-    "035420": "NAVER",
-    "035720": "카카오",
-    "051910": "LG화학",
-    "006400": "삼성SDI",
-    "005380": "현대차",
-    "000270": "기아",
-    "068270": "셀트리온",
-    "003670": "포스코퓨처엠",
-    "105560": "KB금융",
-    "055550": "신한지주",
-    "028260": "삼성물산",
-    "012330": "현대모비스",
-    "066570": "LG전자",
-}
+# ── 일봉 캐시 (당일 내 재사용) ──
 
+class DailyBarCache:
+    """당일 조회한 일봉 데이터를 캐시. 스캐너 반복 실행 시 API 재호출 방지."""
+
+    def __init__(self):
+        self._cache: dict[str, "pd.DataFrame"] = {}
+        self._date: str = ""
+
+    def _check_date(self):
+        today = datetime.now().strftime("%Y%m%d")
+        if self._date != today:
+            self._cache.clear()
+            self._date = today
+
+    def get(self, code: str):
+        self._check_date()
+        return self._cache.get(code)
+
+    def put(self, code: str, df):
+        self._check_date()
+        self._cache[code] = df
+
+    @property
+    def size(self) -> int:
+        return len(self._cache)
+
+    @property
+    def codes(self) -> set[str]:
+        return set(self._cache.keys())
+
+
+bar_cache = DailyBarCache()
+
+
+# ── 스캐너 실행 ──
 
 async def run_scanner(scanner_name: str, progress_fn=None) -> str:
-    """
-    스캐너 실행 콜백.
-    progress_fn: async def(text) — 중간 진행 상황을 텔레그램에 표시
-    """
     from app.brokers.kiwoom.auth import KiwoomAuth
     from app.brokers.kiwoom.client import KiwoomClient
     from app.brokers.kiwoom.market_data import KiwoomMarketData
@@ -52,63 +67,87 @@ async def run_scanner(scanner_name: str, progress_fn=None) -> str:
     import pandas as pd
 
     label = get_scanner_label(scanner_name)
-    codes = list(STOCK_NAMES.keys())
+    pool = get_stock_pool()
+    codes = list(pool.keys())
     total = len(codes)
 
-    auth = KiwoomAuth(settings.kiwoom_app_key, settings.kiwoom_app_secret, settings.kiwoom_base_url)
-    await auth.get_token()
-    rl = RateLimiter(max_calls_per_second=3)
-    client = KiwoomClient(auth, rl, settings.kiwoom_base_url,
-                          settings.kiwoom_app_key, settings.kiwoom_app_secret)
-    md = KiwoomMarketData(client)
+    # 캐시에 없는 종목만 API 호출
+    uncached = [c for c in codes if bar_cache.get(c) is None]
+    cached_count = total - len(uncached)
 
+    if progress_fn:
+        if cached_count > 0:
+            await progress_fn(f"[{label}] {total}개 종목 중 {cached_count}개 캐시 사용, {len(uncached)}개 조회 시작")
+        else:
+            await progress_fn(f"[{label}] {total}개 종목 데이터 수집 시작...")
+
+    if uncached:
+        auth = KiwoomAuth(settings.kiwoom_app_key, settings.kiwoom_app_secret, settings.kiwoom_base_url)
+        await auth.get_token()
+        rl = RateLimiter(max_calls_per_second=3)
+        client = KiwoomClient(auth, rl, settings.kiwoom_base_url,
+                              settings.kiwoom_app_key, settings.kiwoom_app_secret)
+        md = KiwoomMarketData(client)
+
+        today = datetime.now().strftime("%Y%m%d")
+        for i, code in enumerate(uncached, 1):
+            name = get_stock_name(code)
+
+            if progress_fn and (i == 1 or i % 10 == 0 or i == len(uncached)):
+                await progress_fn(f"[{label}] {i}/{len(uncached)} 조회 중... ({name})")
+
+            try:
+                resp = await md.get_daily_bars(code, base_dt=today)
+                if resp.get("return_code") == 0:
+                    key = "stk_dt_pole_chart_qry"
+                    if key in resp and resp[key]:
+                        rows = []
+                        for r in resp[key]:
+                            rows.append({
+                                "datetime": pd.to_datetime(r["dt"]),
+                                "open": float(r["open_pric"]),
+                                "high": float(r["high_pric"]),
+                                "low": float(r["low_pric"]),
+                                "close": float(r["cur_prc"]),
+                                "volume": int(r["trde_qty"]),
+                                "stock_code": code,
+                            })
+                        df = pd.DataFrame(rows).sort_values("datetime").reset_index(drop=True)
+                        bar_cache.put(code, df)
+            except Exception:
+                pass
+            await asyncio.sleep(0.25)
+
+        await client.close()
+
+    # 캐시에서 전체 데이터 조립
     bars = {}
-    for i, code in enumerate(codes, 1):
-        stock_name = STOCK_NAMES.get(code, code)
+    for code in codes:
+        df = bar_cache.get(code)
+        if df is not None:
+            bars[code] = df
 
-        # 매 5개마다 진행 상황 업데이트
-        if progress_fn and (i == 1 or i % 5 == 0 or i == total):
-            await progress_fn(f"[{label}] {i}/{total} 스캔 중... ({stock_name})")
-
-        try:
-            resp = await md.get_daily_bars(code, base_dt="20260410")
-            if resp.get("return_code") == 0:
-                key = "stk_dt_pole_chart_qry"
-                if key in resp and resp[key]:
-                    rows = []
-                    for r in resp[key]:
-                        rows.append({
-                            "datetime": pd.to_datetime(r["dt"]),
-                            "open": float(r["open_pric"]),
-                            "high": float(r["high_pric"]),
-                            "low": float(r["low_pric"]),
-                            "close": float(r["cur_prc"]),
-                            "volume": int(r["trde_qty"]),
-                            "stock_code": code,
-                        })
-                    bars[code] = pd.DataFrame(rows).sort_values("datetime").reset_index(drop=True)
-        except Exception:
-            pass
-        await asyncio.sleep(0.3)
-
-    await client.close()
+    if progress_fn:
+        await progress_fn(f"[{label}] {len(bars)}개 종목 분석 중...")
 
     scanner = ScannerDSL.get_scanner(scanner_name)
     results = scanner.scan(bars)
 
     if not results:
-        return f"[{label}] 완료\n{len(bars)}개 종목 스캔\n\n후보 종목 없음"
+        return f"[{label}] 완료\n{len(bars)}/{total}개 종목 스캔\n\n후보 종목 없음"
 
-    lines = [f"[{label}] 완료", f"{len(bars)}개 종목 스캔", ""]
+    lines = [f"[{label}] 완료", f"{len(bars)}/{total}개 종목 스캔", ""]
     for i, r in enumerate(results[:10], 1):
-        stock_name = STOCK_NAMES.get(r.stock_code, "")
+        name = get_stock_name(r.stock_code)
         reasons = ", ".join(r.reasons)
-        lines.append(f"{i}. {r.stock_code} {stock_name} ({r.score:.1f}점)")
+        lines.append(f"{i}. {r.stock_code} {name} ({r.score:.1f}점)")
         lines.append(f"   {reasons}")
     if len(results) > 10:
         lines.append(f"\n... 외 {len(results) - 10}개")
     return "\n".join(lines)
 
+
+# ── 메인 ──
 
 async def main():
     if not settings.telegram_bot_token:
@@ -121,6 +160,7 @@ async def main():
     print(f"=== Telegram Bot ===")
     print(f"Token: {settings.telegram_bot_token[:15]}...")
     print(f"Chat ID: {settings.telegram_chat_id}")
+    print(f"Stock Pool: {get_pool_size()} stocks")
     print()
 
     # 전략 import (레지스트리 자동 등록)
@@ -138,7 +178,7 @@ async def main():
     health.set_scheduler_running(False)
     bot.handlers.health_check = health
 
-    # 스캐너 콜백 연결 (progress_fn 지원)
+    # 스캐너 콜백 연결
     bot.handlers.scanner_fn = run_scanner
 
     # 알림 매니저 연결
@@ -158,7 +198,7 @@ async def main():
     # 시작 알림
     from app.bot.keyboards import MAIN_MENU_KEYBOARD
     await bot.send_message(
-        "Bot started.\n/help 로 명령어를 확인하세요.",
+        f"Bot started.\nStock pool: {get_pool_size()} stocks\n/help 로 명령어를 확인하세요.",
         reply_markup=MAIN_MENU_KEYBOARD,
     )
 
