@@ -37,7 +37,10 @@ class KiwoomClient:
         body: dict | None = None,
         *,
         retry_on_401: bool = True,
+        _retry_count: int = 0,
     ) -> dict:
+        import asyncio
+
         await self._rate_limiter.acquire()
         token = await self._auth.get_token()
 
@@ -60,6 +63,12 @@ class KiwoomClient:
             return await self.request(method, path, tr_code, body, retry_on_401=False)
 
         if resp.status_code == 429:
+            if _retry_count < 3:
+                wait = 1.0 * (2 ** _retry_count)
+                log.warning("rate_limit_retry", path=path, wait=wait, attempt=_retry_count + 1)
+                await asyncio.sleep(wait)
+                return await self.request(method, path, tr_code, body,
+                                          retry_on_401=retry_on_401, _retry_count=_retry_count + 1)
             raise RateLimitError(f"API 호출 제한 초과: {path}")
 
         if resp.status_code >= 500:

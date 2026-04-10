@@ -57,6 +57,33 @@ bar_cache = DailyBarCache()
 
 # ── 스캐너 실행 ──
 
+async def _fetch_one(md, code: str, today: str) -> bool:
+    """종목 1개 일봉 조회 후 캐시 저장. 성공 시 True."""
+    import pandas as pd
+    try:
+        resp = await md.get_daily_bars(code, base_dt=today)
+        if resp.get("return_code") == 0:
+            key = "stk_dt_pole_chart_qry"
+            if key in resp and resp[key]:
+                rows = []
+                for r in resp[key]:
+                    rows.append({
+                        "datetime": pd.to_datetime(r["dt"]),
+                        "open": float(r["open_pric"]),
+                        "high": float(r["high_pric"]),
+                        "low": float(r["low_pric"]),
+                        "close": float(r["cur_prc"]),
+                        "volume": int(r["trde_qty"]),
+                        "stock_code": code,
+                    })
+                df = pd.DataFrame(rows).sort_values("datetime").reset_index(drop=True)
+                bar_cache.put(code, df)
+                return True
+    except Exception:
+        pass
+    return False
+
+
 async def run_scanner(scanner_name: str, progress_fn=None) -> str:
     from app.brokers.kiwoom.auth import KiwoomAuth
     from app.brokers.kiwoom.client import KiwoomClient
@@ -84,39 +111,33 @@ async def run_scanner(scanner_name: str, progress_fn=None) -> str:
     if uncached:
         auth = KiwoomAuth(settings.kiwoom_app_key, settings.kiwoom_app_secret, settings.kiwoom_base_url)
         await auth.get_token()
-        rl = RateLimiter(max_calls_per_second=3)
+        rl = RateLimiter(max_calls_per_second=2)  # 보수적 제한
         client = KiwoomClient(auth, rl, settings.kiwoom_base_url,
                               settings.kiwoom_app_key, settings.kiwoom_app_secret)
         md = KiwoomMarketData(client)
 
         today = datetime.now().strftime("%Y%m%d")
+        failed: list[str] = []
+
         for i, code in enumerate(uncached, 1):
             name = get_stock_name(code)
 
-            if progress_fn and (i == 1 or i % 10 == 0 or i == len(uncached)):
+            if progress_fn and (i == 1 or i % 20 == 0 or i == len(uncached)):
                 await progress_fn(f"[{label}] {i}/{len(uncached)} 조회 중... ({name})")
 
-            try:
-                resp = await md.get_daily_bars(code, base_dt=today)
-                if resp.get("return_code") == 0:
-                    key = "stk_dt_pole_chart_qry"
-                    if key in resp and resp[key]:
-                        rows = []
-                        for r in resp[key]:
-                            rows.append({
-                                "datetime": pd.to_datetime(r["dt"]),
-                                "open": float(r["open_pric"]),
-                                "high": float(r["high_pric"]),
-                                "low": float(r["low_pric"]),
-                                "close": float(r["cur_prc"]),
-                                "volume": int(r["trde_qty"]),
-                                "stock_code": code,
-                            })
-                        df = pd.DataFrame(rows).sort_values("datetime").reset_index(drop=True)
-                        bar_cache.put(code, df)
-            except Exception:
-                pass
-            await asyncio.sleep(0.25)
+            ok = await _fetch_one(md, code, today)
+            if not ok:
+                failed.append(code)
+            await asyncio.sleep(0.4)
+
+        # 실패 종목 재시도 (1회)
+        if failed:
+            if progress_fn:
+                await progress_fn(f"[{label}] {len(failed)}개 종목 재시도 중...")
+            await asyncio.sleep(2)  # 쿨다운
+            for code in failed:
+                await _fetch_one(md, code, today)
+                await asyncio.sleep(0.5)
 
         await client.close()
 

@@ -117,6 +117,37 @@ class BotHandlers:
                 f"  status: ok"
             )
 
+    # ── 유틸 ──
+
+    async def _send_long_message(self, query, text: str, final_markup=None):
+        """긴 메시지를 분할 전송. 마지막 조각에만 reply_markup 첨부."""
+        MAX_LEN = 4000  # 여유 두고 4000
+        if len(text) <= MAX_LEN:
+            await query.edit_message_text(text, reply_markup=final_markup)
+            return
+
+        # 줄 단위로 분할
+        lines = text.split("\n")
+        chunks: list[str] = []
+        current = ""
+        for line in lines:
+            if len(current) + len(line) + 1 > MAX_LEN:
+                chunks.append(current)
+                current = line
+            else:
+                current = current + "\n" + line if current else line
+        if current:
+            chunks.append(current)
+
+        # 첫 조각: 기존 메시지 수정
+        await query.edit_message_text(chunks[0])
+
+        # 나머지: 새 메시지로 전송
+        for i, chunk in enumerate(chunks[1:], 1):
+            is_last = (i == len(chunks) - 1)
+            markup = final_markup if is_last else None
+            await query.message.reply_text(chunk, reply_markup=markup)
+
     # ── 인라인 버튼 콜백 핸들러 ──
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -155,15 +186,15 @@ class BotHandlers:
                     self._last_scan_results = scan_results
 
                     # 종목별 차트 버튼 생성
+                    chart_markup = None
                     if scan_results:
                         from app.market.stock_pool import get_stock_name
                         buttons = []
                         row = []
                         for r in scan_results:
                             name = get_stock_name(r.stock_code)
-                            short_label = f"{name}"
                             row.append(InlineKeyboardButton(
-                                short_label,
+                                name,
                                 callback_data=f"chart:{r.stock_code}:{scanner_id}",
                             ))
                             if len(row) == 3:
@@ -171,10 +202,11 @@ class BotHandlers:
                                 row = []
                         if row:
                             buttons.append(row)
-                        markup = InlineKeyboardMarkup(buttons)
-                        await query.edit_message_text(result_text, reply_markup=markup)
-                    else:
-                        await query.edit_message_text(result_text)
+                        chart_markup = InlineKeyboardMarkup(buttons)
+
+                    # 메시지 분할 (텔레그램 4096자 제한)
+                    await self._send_long_message(query, result_text, chart_markup)
+
                 except Exception as e:
                     await query.edit_message_text(f"[{label}] 오류: {e}")
             else:
