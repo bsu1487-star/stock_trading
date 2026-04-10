@@ -137,13 +137,11 @@ async def run_scanner(scanner_name: str, progress_fn=None) -> str:
         return f"[{label}] 완료\n{len(bars)}/{total}개 종목 스캔\n\n후보 종목 없음"
 
     lines = [f"[{label}] 완료", f"{len(bars)}/{total}개 종목 스캔", ""]
-    for i, r in enumerate(results[:10], 1):
+    for i, r in enumerate(results, 1):
         name = get_stock_name(r.stock_code)
         reasons = ", ".join(r.reasons)
         lines.append(f"{i}. {r.stock_code} {name} ({r.score:.1f}점)")
         lines.append(f"   {reasons}")
-    if len(results) > 10:
-        lines.append(f"\n... 외 {len(results) - 10}개")
     return "\n".join(lines)
 
 
