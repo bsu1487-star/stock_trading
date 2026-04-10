@@ -1,0 +1,35 @@
+# 키움 API 도메인
+KIWOOM_REAL_DOMAIN = "https://api.kiwoom.com"
+KIWOOM_MOCK_DOMAIN = "https://mockapi.kiwoom.com"
+
+# TR 코드
+TR_AUTH = "au10001"
+TR_BUY = "kt10000"
+TR_SELL = "kt10001"
+TR_MODIFY = "kt10002"
+TR_CANCEL = "kt10003"
+TR_BALANCE = "kt00017"
+TR_DEPOSIT = "ka10170"
+TR_PENDING = "ka10075"
+TR_CHART_MINUTE = "ka10080"
+TR_CHART_DAILY = "ka10081"
+
+# API 경로
+PATH_AUTH = "/oauth2/token"
+PATH_ORDER = "/api/dostk/ordr"
+PATH_ACCOUNT = "/api/dostk/acnt"
+PATH_CHART = "/api/dostk/chart"
+
+# 장 시간
+MARKET_OPEN = "09:00"
+MARKET_CLOSE = "15:30"
+MARKET_CLOSE_HALF = "12:30"
+PRE_MARKET_START = "08:30"
+OPENING_END = "09:15"
+CLOSING_START = "15:00"
+CLOSING_END = "15:20"
+
+# 알림 등급
+ALERT_CRITICAL = "CRITICAL"
+ALERT_WARNING = "WARNING"
+ALERT_INFO = "INFO"
